@@ -117,7 +117,7 @@ impl fmt::Display for PlurkError {
 #[derive(Clone, Debug)]
 pub struct Plurk {
     client_key: String,
-    consumer_secret: String,
+    client_secret: String,
     token_key: String,
     token_secret: String,
 }
@@ -134,7 +134,7 @@ impl Plurk {
     {
         Self {
             client_key: consumer_key.into(),
-            consumer_secret: consumer_secret.into(),
+            client_secret: consumer_secret.into(),
             token_key: match token_key {
                 Some(val) => val.into(),
                 _ => String::from(""),
@@ -216,7 +216,7 @@ impl Plurk {
         let sign_url = format!("{}&{}&{}", method, base_url, query_part);
 
         // 5. Get sign key
-        let sign_key = format!("{}&{}", self.consumer_secret, self.token_secret);
+        let sign_key = format!("{}&{}", self.client_secret, self.token_secret);
 
         // 6. Cal signature
         let sign = hmac_sha1_sign(sign_url, sign_key);
@@ -376,7 +376,7 @@ impl fmt::Display for Plurk {
             f,
             "Plurk API {}:{} ({})",
             self.client_key,
-            self.consumer_secret,
+            self.client_secret,
             {
                 if self.is_auth() {
                     "Authorized"

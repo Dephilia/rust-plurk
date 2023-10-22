@@ -13,4 +13,8 @@ Cargo.lock
 # MSVC Windows builds of rustc generate these, which store debugging information
 *.pdb
 
+# Shouldn't contain key
 key.toml
+
+# coverage report
+tarpaulin-report.html

@@ -9,18 +9,20 @@ name = "plurk"
 path = "src/app.rs"
 
 [dependencies]
+base64 = "0.21"
+querystring = "1.1"
+rand = "*"
 reqwest = { version = "0.11", features = ["json", "stream", "multipart"] }
-url = "2.4"
+ring = "0.17"
+serde = { version = "1.0", features = ["derive"] }
+serde_urlencoded = "0.7"
 tokio = { version = "1.0", features = ["full"] }
 tokio-util = { version = "0.7", features = ["codec"] }
-serde = { version = "1.0", features = ["derive"] }
-rand = "*"
+url = "2.4"
 url-escape = "*"
-ring = "0.17.0"
-base64 = "0.21.0"
-querystring = "1.1.0"
-serde_urlencoded = "0.7"
-
 clap = { version = "4.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "0.8"
+
+[dev-dependencies]
+tempdir = "0.3"
