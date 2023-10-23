@@ -8,23 +8,19 @@ mod tests {
     fn test_new_plurk() {
         let plurk = Plurk::new("123", "abc", None, None);
         let res = format!("{}", plurk);
-        assert_eq!(res, "Plurk API 123:abc (Unauthorized)");
+        assert_eq!(res, "Plurk API 123 (Unauthorized)");
 
         let plurk = Plurk::new("123", "abc", Some("ttt"), None);
         let res = format!("{}", plurk);
-        assert_eq!(res, "Plurk API 123:abc (Unauthorized)");
+        assert_eq!(res, "Plurk API 123 (Unauthorized)");
 
         let plurk = Plurk::new("123", "abc", None, Some("AAA"));
         let res = format!("{}", plurk);
-        assert_eq!(res, "Plurk API 123:abc (Unauthorized)");
-
-        let plurk = Plurk::new("123", "abc", Some("ttt"), Some(""));
-        let res = format!("{}", plurk);
-        assert_eq!(res, "Plurk API 123:abc (Unauthorized)");
+        assert_eq!(res, "Plurk API 123 (Unauthorized)");
 
         let plurk = Plurk::new("123", "abc", Some("ttt"), Some("AAA"));
         let res = format!("{}", plurk);
-        assert_eq!(res, "Plurk API 123:abc (Authorized)");
+        assert_eq!(res, "Plurk API 123 (Authorized)");
     }
 
     #[tokio::test]

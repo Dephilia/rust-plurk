@@ -1,3 +1,4 @@
+use crate::secret::{Secret, SecretError};
 use base64::{engine::general_purpose, Engine};
 use rand::{distributions::Alphanumeric, thread_rng, Rng};
 use reqwest::{self, multipart, Body, RequestBuilder, Response};
@@ -103,6 +104,8 @@ fn hmac_sha1_sign(sign_url: String, sign_key: String) -> String {
 pub enum PlurkError {
     ReqwestError(reqwest::Error),
     APICallError(String),
+    AuthError(String),
+    SecretError(SecretError),
 }
 
 impl fmt::Display for PlurkError {
@@ -110,16 +113,15 @@ impl fmt::Display for PlurkError {
         match self {
             Self::ReqwestError(e) => write!(f, "reqwest error: {}", e),
             Self::APICallError(e) => write!(f, "API Request Error: {}", e),
+            Self::AuthError(e) => write!(f, "Authorization Error: {}", e),
+            Self::SecretError(e) => write!(f, "Secret Error: {}", e),
         }
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct Plurk {
-    client_key: String,
-    client_secret: String,
-    token_key: String,
-    token_secret: String,
+    secret: Secret,
 }
 
 impl Plurk {
@@ -133,26 +135,16 @@ impl Plurk {
         TString: Into<String>,
     {
         Self {
-            client_key: consumer_key.into(),
-            client_secret: consumer_secret.into(),
-            token_key: match token_key {
-                Some(val) => val.into(),
-                _ => String::from(""),
-            },
-            token_secret: match token_secret {
-                Some(val) => val.into(),
-                _ => String::from(""),
-            },
+            secret: Secret::new(consumer_key, consumer_secret, token_key, token_secret),
         }
     }
 
     pub fn is_auth(&self) -> bool {
-        !(self.token_key.is_empty() || self.token_secret.is_empty())
+        self.secret.get_token_key().is_some()
     }
 
     fn update_token<S: Into<String>>(&mut self, token_key: S, token_secret: S) {
-        self.token_key = token_key.into();
-        self.token_secret = token_secret.into();
+        self.secret.update_token_mut(token_key, token_secret);
     }
 
     fn prep_cmd(api: impl Into<String>) -> String {
@@ -162,11 +154,14 @@ impl Plurk {
     fn to_oauth(&self) -> QueryPair {
         let mut key_query = Vec::new();
 
-        if !self.client_key.is_empty() {
-            key_query.push((String::from("oauth_consumer_key"), self.client_key.clone()));
+        if !self.secret.get_consumer_key().is_empty() {
+            key_query.push((
+                String::from("oauth_consumer_key"),
+                self.secret.get_consumer_key(),
+            ));
         }
-        if !self.token_key.is_empty() {
-            key_query.push((String::from("oauth_token"), self.token_key.clone()));
+        if let Some(token_key) = self.secret.get_token_key() {
+            key_query.push((String::from("oauth_token"), token_key));
         }
 
         key_query
@@ -216,7 +211,7 @@ impl Plurk {
         let sign_url = format!("{}&{}&{}", method, base_url, query_part);
 
         // 5. Get sign key
-        let sign_key = format!("{}&{}", self.client_secret, self.token_secret);
+        let sign_key = self.secret.get_sign_secret();
 
         // 6. Cal signature
         let sign = hmac_sha1_sign(sign_url, sign_key);
@@ -298,12 +293,18 @@ impl Plurk {
             .map_err(|e| PlurkError::ReqwestError(e))
     }
 
-    pub fn get_auth_url(&self) -> String {
-        format!(
-            "{}?oauth_token={}",
-            Plurk::prep_cmd(AUTHORIZE_URL),
-            self.token_key
-        )
+    pub fn get_auth_url(&self) -> Result<String, PlurkError> {
+        if let Some(token_key) = self.secret.get_token_key() {
+            Ok(format!(
+                "{}?oauth_token={}",
+                Plurk::prep_cmd(AUTHORIZE_URL),
+                token_key
+            ))
+        } else {
+            Err(PlurkError::AuthError(
+                "Missing requested token key".to_string(),
+            ))
+        }
     }
 
     fn parse_query(raw: String) -> QueryPair {
@@ -368,22 +369,34 @@ impl Plurk {
         }
         Ok(())
     }
+
+    pub fn to_toml<P>(&self, path: P) -> Result<(), PlurkError>
+    where
+        P: AsRef<Path>,
+    {
+        self.secret
+            .to_toml(path)
+            .map_err(|e| PlurkError::SecretError(e))
+    }
+
+    pub fn from_toml<P>(path: P) -> Result<Self, PlurkError>
+    where
+        P: AsRef<Path>,
+    {
+        Ok(Self {
+            secret: Secret::from_toml(path).map_err(|e| PlurkError::SecretError(e))?,
+        })
+    }
 }
 
 impl fmt::Display for Plurk {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "Plurk API {}:{} ({})",
-            self.client_key,
-            self.client_secret,
-            {
-                if self.is_auth() {
-                    "Authorized"
-                } else {
-                    "Unauthorized"
-                }
+        write!(f, "Plurk API {} ({})", self.secret.get_consumer_key(), {
+            if self.is_auth() {
+                "Authorized"
+            } else {
+                "Unauthorized"
             }
-        )
+        })
     }
 }

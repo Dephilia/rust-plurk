@@ -2,11 +2,7 @@ use clap::Parser;
 use reqwest::StatusCode;
 use rust_plurk::plurk::{Plurk, PlurkError};
 use serde::{Deserialize, Serialize};
-use std::{
-    fs,
-    io::{self, Write},
-    path::Path,
-};
+use std::io::{self, Write};
 
 /// Plurk API test tool
 #[derive(Parser)]
@@ -58,94 +54,18 @@ pub struct OauthKeys {
     secret: String,
 }
 
-fn from_toml(key_file: String) -> (String, String, Option<String>, Option<String>) {
-    let path = Path::new(&key_file);
-    let text = fs::read_to_string(&path).expect("Cannot read file.");
-    let file_data = toml::from_str::<OauthToml>(&text).expect("Incompatible key information.");
-
-    match file_data.oauth_token {
-        Some(token) => (
-            file_data.consumer.key,
-            file_data.consumer.secret,
-            Some(token.key),
-            Some(token.secret),
-        ),
-        None => (
-            file_data.consumer.key,
-            file_data.consumer.secret,
-            None,
-            None,
-        ),
-    }
-}
-
-#[allow(dead_code)]
-fn to_toml(
-    key_file: String,
-    consumer_key: String,
-    consumer_secret: String,
-    token_key: Option<String>,
-    token_secret: Option<String>,
-) {
-    let path = Path::new(&key_file);
-    let prep_toml = OauthToml {
-        consumer: OauthKeys {
-            key: consumer_key,
-            secret: consumer_secret,
-        },
-        oauth_token: if let (Some(tk), Some(ts)) = (token_key, token_secret) {
-            Some(OauthKeys {
-                key: tk,
-                secret: ts,
-            })
-        } else {
-            None
-        },
-    };
-
-    let s = toml::to_string(&prep_toml).expect("Prepare toml information failed.");
-    fs::write(path, s).expect("Key file write failed.");
-}
-
 #[tokio::main]
 async fn main() -> Result<(), PlurkError> {
     let cli = Cli::parse();
 
-    let plurk = match (cli.consumer_key, cli.consumer_secret, cli.key_file) {
+    let plurk = match (cli.consumer_key, cli.consumer_secret, cli.key_file.clone()) {
         (Some(consumer_key), Some(consumer_secret), None) => Plurk::new(
             consumer_key,
             consumer_secret,
             cli.token_key,
             cli.token_secret,
         ),
-        (None, None, Some(key_file)) => {
-            let (ok, os, tk, ts) = from_toml(key_file);
-            Plurk::new(ok, os, tk, ts)
-        }
-        (consumer_key, consumer_secret, Some(key_file)) => {
-            let (ok, os, tk, ts) = from_toml(key_file);
-            let consumer_key = if let Some(cli_consumer_key) = consumer_key {
-                cli_consumer_key
-            } else {
-                ok
-            };
-            let consumer_secret = if let Some(cli_consumer_secret) = consumer_secret {
-                cli_consumer_secret
-            } else {
-                os
-            };
-            let token_key = if cli.token_key.is_none() {
-                tk
-            } else {
-                cli.token_key
-            };
-            let token_secret = if cli.token_secret.is_none() {
-                ts
-            } else {
-                cli.token_secret
-            };
-            Plurk::new(consumer_key, consumer_secret, token_key, token_secret)
-        }
+        (_, _, Some(key_file)) => Plurk::from_toml(key_file)?,
         _ => {
             println!("Invalid consumer key/secret or key_file.");
             return Ok(());
@@ -155,7 +75,8 @@ async fn main() -> Result<(), PlurkError> {
     let plurk = if !plurk.is_auth() {
         let mut plurk = plurk;
         plurk.request_auth().await?;
-        println!("Please access to: {}", plurk.get_auth_url());
+        let url = plurk.get_auth_url()?;
+        println!("Please access to: {}", url);
         print!("Input pin:");
         io::stdout().flush().expect("Flush failed");
 
@@ -169,6 +90,10 @@ async fn main() -> Result<(), PlurkError> {
     } else {
         plurk
     };
+
+    if let Some(key_file) = cli.key_file {
+        plurk.to_toml(key_file)?;
+    }
 
     let parameters = if let Some(q) = cli.query {
         let mut pair_list: Vec<(String, String)> = Vec::new();

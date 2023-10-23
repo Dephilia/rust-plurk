@@ -23,15 +23,15 @@ struct SecretPair {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-struct Secret {
-    client: SecretPair,
+pub struct Secret {
+    consumer: SecretPair,
     token: Option<SecretPair>,
 }
 
 impl Secret {
     pub fn new<TString>(
-        client_key: TString,
-        client_secret: TString,
+        consumer_key: TString,
+        consumer_secret: TString,
         token_key: Option<TString>,
         token_secret: Option<TString>,
     ) -> Self
@@ -39,9 +39,9 @@ impl Secret {
         TString: Into<String>,
     {
         Self {
-            client: SecretPair {
-                key: client_key.into(),
-                secret: client_secret.into(),
+            consumer: SecretPair {
+                key: consumer_key.into(),
+                secret: consumer_secret.into(),
             },
             token: if let (Some(key), Some(secret)) = (token_key, token_secret) {
                 Some(SecretPair {
@@ -59,7 +59,7 @@ impl Secret {
         TString: Into<String>,
     {
         Self {
-            client: self.client,
+            consumer: self.consumer,
             token: Some(SecretPair {
                 key: token_key.into(),
                 secret: token_secret.into(),
@@ -67,8 +67,18 @@ impl Secret {
         }
     }
 
-    pub fn get_client_key(&self) -> String {
-        self.client.key.clone()
+    pub fn update_token_mut<TString>(&mut self, token_key: TString, token_secret: TString)
+    where
+        TString: Into<String>,
+    {
+        self.token = Some(SecretPair {
+            key: token_key.into(),
+            secret: token_secret.into(),
+        });
+    }
+
+    pub fn get_consumer_key(&self) -> String {
+        self.consumer.key.clone()
     }
 
     pub fn get_token_key(&self) -> Option<String> {
@@ -81,9 +91,9 @@ impl Secret {
 
     pub fn get_sign_secret(&self) -> String {
         if let Some(token) = &self.token {
-            format!("{}&{}", self.client.secret, token.secret)
+            format!("{}&{}", self.consumer.secret, token.secret)
         } else {
-            format!("{}&", self.client.secret)
+            format!("{}&", self.consumer.secret)
         }
     }
 
@@ -91,11 +101,8 @@ impl Secret {
     where
         P: AsRef<Path>,
     {
-        let s = toml::to_string(self).map_err(|_| {
-            SecretError::TOMLError(String::from("Prepare toml information failed."))
-        })?;
-        fs::write(path, s).map_err(|_| SecretError::IOError(String::from("File write failed.")))?;
-
+        let s = toml::to_string(self).map_err(|e| SecretError::TOMLError(e.to_string()))?;
+        fs::write(path, s).map_err(|e| SecretError::IOError(e.to_string()))?;
         Ok(())
     }
 
@@ -103,10 +110,8 @@ impl Secret {
     where
         P: AsRef<Path>,
     {
-        let text = fs::read_to_string(&path)
-            .map_err(|_| SecretError::IOError(String::from("File read failed.")))?;
-        let s = toml::from_str(&text)
-            .map_err(|_| SecretError::TOMLError(String::from("Incompatible key information.")))?;
+        let text = fs::read_to_string(&path).map_err(|e| SecretError::IOError(e.to_string()))?;
+        let s = toml::from_str(&text).map_err(|e| SecretError::TOMLError(e.to_string()))?;
         Ok(s)
     }
 }
@@ -116,14 +121,14 @@ impl fmt::Display for Secret {
         if let Some(token) = &self.token {
             write!(
                 f,
-                "Client Key: {}\nClient Secret: {}\nToken Key: {}\nToken Secret: {}",
-                self.client.key, self.client.secret, token.key, token.secret,
+                "Consumer Key: {}\nConsumer Secret: {}\nToken Key: {}\nToken Secret: {}",
+                self.consumer.key, self.consumer.secret, token.key, token.secret,
             )
         } else {
             write!(
                 f,
-                "Client Key: {}\nClient Secret: {}",
-                self.client.key, self.client.secret,
+                "Consumer Key: {}\nConsumer Secret: {}",
+                self.consumer.key, self.consumer.secret,
             )
         }
     }
@@ -138,8 +143,8 @@ mod tests {
     fn test_secret_unauthed() {
         let secret = Secret::new("c1", "c2", None, None);
         let res = format!("{}", secret);
-        assert_eq!(res, "Client Key: c1\nClient Secret: c2");
-        assert_eq!(secret.get_client_key(), "c1");
+        assert_eq!(res, "Consumer Key: c1\nConsumer Secret: c2");
+        assert_eq!(secret.get_consumer_key(), "c1");
         assert_eq!(secret.get_token_key(), None);
         assert_eq!(secret.get_sign_secret(), "c2&");
     }
@@ -150,10 +155,17 @@ mod tests {
         let res = format!("{}", secret);
         assert_eq!(
             res,
-            "Client Key: c1\nClient Secret: c2\nToken Key: t1\nToken Secret: t2"
+            "Consumer Key: c1\nConsumer Secret: c2\nToken Key: t1\nToken Secret: t2"
         );
         assert_eq!(secret.get_token_key(), Some(String::from("t1")));
         assert_eq!(secret.get_sign_secret(), "c2&t2");
+        let mut secret = secret;
+        secret.update_token_mut("t3", "t4");
+        let res = format!("{}", secret);
+        assert_eq!(
+            res,
+            "Consumer Key: c1\nConsumer Secret: c2\nToken Key: t3\nToken Secret: t4"
+        );
     }
 
     #[test]
@@ -170,12 +182,21 @@ mod tests {
         let res = format!("{}", secret);
         assert_eq!(
             res,
-            "Client Key: c1\nClient Secret: c2\nToken Key: t1\nToken Secret: t2"
+            "Consumer Key: c1\nConsumer Secret: c2\nToken Key: t1\nToken Secret: t2"
         );
 
         tmp_dir
             .close()
             .map_err(|e| SecretError::IOError(e.to_string()))?;
         Ok(())
+    }
+
+    #[test]
+    fn test_error() {
+        let res = format!("{}", SecretError::IOError(String::from("abc")));
+        assert_eq!(res, "IO Error: abc");
+
+        let res = format!("{}", SecretError::TOMLError(String::from("abc")));
+        assert_eq!(res, "TOML Error: abc");
     }
 }
