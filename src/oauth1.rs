@@ -105,11 +105,8 @@ impl Oauth1 {
     where
         T: Into<String>,
     {
-        let mut query_poll: QueryPair = if let Ok(q) = serde_urlencoded::from_str(&query.into()) {
-            q
-        } else {
-            Vec::new()
-        };
+        let mut query_poll: QueryPair =
+            serde_urlencoded::from_str(&query.into()).unwrap_or(Vec::new());
 
         query_poll.extend(self.to_query_pair());
         query_poll.sort_by(|a, b| a.0.cmp(&b.0));
@@ -117,11 +114,7 @@ impl Oauth1 {
         let uri = uri.into();
         let encoded_uri = url_escape::encode_www_form_urlencoded(&uri);
 
-        let raw_query_part = if let Ok(body) = serde_urlencoded::to_string(&query_poll) {
-            body
-        } else {
-            String::new()
-        };
+        let raw_query_part = serde_urlencoded::to_string(&query_poll).unwrap_or(String::new());
         let encoded_query = url_escape::encode_www_form_urlencoded(&raw_query_part);
 
         let sign_base = format!("{}&{}&{}", method.into(), encoded_uri, encoded_query);
