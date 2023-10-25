@@ -1,6 +1,7 @@
 # rust-plurk
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![codecov](https://codecov.io/gh/Dephilia/rust-plurk/graph/badge.svg?token=A71A8CHLU9)](https://codecov.io/gh/Dephilia/rust-plurk)
 
 Plurk API 2.0 + Oauth1 Library in Rust
 
