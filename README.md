@@ -30,7 +30,7 @@ TBD
 Current, the library has a console test app.
 
 ```bash
-cargo build --release
+cargo build --features build-binary --release
 
 # For help
 ./target/release/plurk -h
