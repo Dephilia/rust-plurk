@@ -1,15 +1,11 @@
+use crate::oauth1::Oauth1;
 use crate::secret::{Secret, SecretError};
-use base64::{engine::general_purpose, Engine};
-use rand::{distributions::Alphanumeric, thread_rng, Rng};
 use reqwest::{self, multipart, Body, RequestBuilder, Response};
-use ring::hmac;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
     ffi::OsStr,
     fmt::{self, Debug},
     path::Path,
-    time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::fs::File;
 use tokio_util::codec::{BytesCodec, FramedRead};
@@ -19,86 +15,6 @@ const BASE_URL: &str = "https://www.plurk.com";
 const REQUEST_TOKEN_URL: &str = "/OAuth/request_token";
 const AUTHORIZE_URL: &str = "/OAuth/authorize";
 const ACCESS_TOKEN_URL: &str = "/OAuth/access_token";
-
-type QueryPair = Vec<(String, String)>;
-
-struct Oauth1 {
-    inner: QueryPair,
-}
-
-impl Oauth1 {
-    fn new() -> Self {
-        Self {
-            inner: vec![
-                ("oauth_nonce", Oauth1::gen_nonce(10)),
-                ("oauth_timestamp", Oauth1::gen_timestamp()),
-                ("oauth_signature_method", "HMAC-SHA1".to_string()),
-                ("oauth_version", "1.0".to_string()),
-            ]
-            .iter()
-            .map(|(key, value)| (key.to_string(), value.to_string()))
-            .collect(),
-        }
-    }
-
-    fn gen_timestamp() -> String {
-        let start = SystemTime::now();
-        start
-            .duration_since(UNIX_EPOCH)
-            .expect("Time went backwards")
-            .as_secs()
-            .to_string()
-    }
-
-    fn gen_nonce(n: usize) -> String {
-        thread_rng()
-            .sample_iter(&Alphanumeric)
-            .take(n)
-            .map(char::from)
-            .collect()
-    }
-
-    fn set_sign(&mut self, sign: impl Into<String>) {
-        self.inner
-            .push((String::from("oauth_signature"), sign.into()));
-    }
-
-    fn to_header(&self) -> String {
-        let mut oauth_header = self
-            .inner
-            .iter()
-            .filter(|x| x.0.starts_with("oauth_"))
-            .map(|x| format!(" {}=\"{}\",", x.0, x.1))
-            .collect::<String>();
-        oauth_header.pop();
-        format!("OAuth{oauth_header}")
-    }
-
-    fn extend(&mut self, items: QueryPair) {
-        self.inner.extend(items)
-    }
-
-    fn sort(&mut self) {
-        self.inner.sort_by(|a, b| a.0.cmp(&b.0));
-    }
-
-    fn get_inner(&self) -> QueryPair {
-        self.inner.clone()
-    }
-}
-
-impl Default for Oauth1 {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-fn hmac_sha1_sign(sign_url: String, sign_key: String) -> String {
-    let key = hmac::Key::new(hmac::HMAC_SHA1_FOR_LEGACY_USE_ONLY, sign_key.as_bytes());
-    let h = hmac::sign(&key, sign_url.as_bytes());
-    let sign = general_purpose::STANDARD.encode(&h);
-    url_escape::encode_www_form_urlencoded(&sign).to_string()
-}
 
 #[derive(Debug)]
 pub enum PlurkError {
@@ -151,78 +67,30 @@ impl Plurk {
         format!("{}{}", BASE_URL, api.into())
     }
 
-    fn to_oauth(&self) -> QueryPair {
-        let mut key_query = Vec::new();
-
-        if !self.secret.get_consumer_key().is_empty() {
-            key_query.push((
-                String::from("oauth_consumer_key"),
-                self.secret.get_consumer_key(),
-            ));
-        }
-        if let Some(token_key) = self.secret.get_token_key() {
-            key_query.push((String::from("oauth_token"), token_key));
-        }
-
-        key_query
-    }
-
     fn sign(&self, builder: RequestBuilder) -> RequestBuilder {
-        // 1. Get Request
         let (client, inner) = builder.build_split();
-        let mut request = inner.unwrap();
+        let request = inner.unwrap();
 
-        // 2. Get Query
-        let url = request.url().clone();
+        let url = &request.url()[..Position::AfterPath];
+        let url = url.to_string();
         let method = request.method().to_string();
-
-        // 3. Mix to oauth pool, sort by first alphabet
-        let mut auth = Oauth1::new();
-        let keys = self.to_oauth();
-        auth.extend(keys);
-
-        if let Some(raw_body) = request.body() {
-            let raw_body = raw_body.as_bytes().unwrap();
-            let body = String::from_utf8_lossy(raw_body).to_string();
-            let query = Plurk::parse_query(body);
-            auth.extend(query.clone());
-
-            let mut query = query;
-
-            query.retain(|x| !x.0.starts_with("oauth_"));
-
-            if let Ok(body) = serde_urlencoded::to_string(query) {
-                *request.body_mut() = Some(body.into());
+        let query = if let Some(raw_body) = request.body() {
+            if let Some(raw_body) = raw_body.as_bytes() {
+                String::from_utf8_lossy(raw_body).to_string()
+            } else {
+                String::new()
             }
-        }
-
-        auth.sort();
-
-        // 4. Get sign url
-        let raw_base_url = &url[..Position::AfterPath];
-        let base_url = url_escape::encode_www_form_urlencoded(raw_base_url);
-
-        let raw_query_part = if let Ok(body) = serde_urlencoded::to_string(auth.get_inner()) {
-            body
         } else {
             String::new()
         };
-        let query_part = url_escape::encode_www_form_urlencoded(&raw_query_part);
-        let sign_url = format!("{}&{}&{}", method, base_url, query_part);
 
-        // 5. Get sign key
-        let sign_key = self.secret.get_sign_secret();
-
-        // 6. Cal signature
-        let sign = hmac_sha1_sign(sign_url, sign_key);
-
-        // 7. Write to oauth
-        auth.set_sign(sign);
-        let header = auth.to_header();
+        let oauth = Oauth1::new(self.secret.clone())
+            .sign(method, url, query)
+            .to_header();
 
         let builder = RequestBuilder::from_parts(client, request);
 
-        builder.header(reqwest::header::AUTHORIZATION, header)
+        builder.header(reqwest::header::AUTHORIZATION, oauth)
     }
 
     async fn file_to_multipart<TPath>(file: (String, TPath)) -> Result<multipart::Form, PlurkError>
@@ -278,7 +146,6 @@ impl Plurk {
         // Add multipart for image
         let request = if let Some(f) = file {
             let form = Plurk::file_to_multipart(f).await?;
-
             request.multipart(form)
         } else {
             request
@@ -307,26 +174,15 @@ impl Plurk {
         }
     }
 
-    fn parse_query(raw: String) -> QueryPair {
-        querystring::querify(&raw)
-            .iter()
-            .map(|(key, value)| (key.to_string(), value.to_string()))
-            .collect()
-    }
-
     fn parse_oauth_token(raw: String) -> Option<(String, String)> {
-        let qs = querystring::querify(&raw);
-        let hashed_qs: HashMap<String, String> = qs
-            .iter()
-            .map(|(key, value)| (key.to_string(), value.to_string()))
-            .collect();
-        if let (Some(key), Some(secret)) = (
-            hashed_qs.get("oauth_token"),
-            hashed_qs.get("oauth_token_secret"),
-        ) {
-            Some((key.to_string(), secret.to_string()))
-        } else {
-            None
+        #[derive(Deserialize)]
+        struct TmpToken {
+            oauth_token: String,
+            oauth_token_secret: String,
+        }
+        match serde_urlencoded::from_str::<TmpToken>(&raw) {
+            Ok(token) => Some((token.oauth_token, token.oauth_token_secret)),
+            _ => None,
         }
     }
 

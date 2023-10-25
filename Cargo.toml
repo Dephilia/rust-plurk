@@ -7,10 +7,10 @@ authors = ["Dephilia <me@dephilia.moe>"]
 [[bin]]
 name = "plurk"
 path = "src/app.rs"
+required-features = ["build-binary"]
 
 [dependencies]
 base64 = "0.21"
-querystring = "1.1"
 rand = "*"
 reqwest = { version = "0.11", features = ["json", "stream", "multipart"] }
 ring = "0.17"
@@ -20,9 +20,13 @@ tokio = { version = "1.0", features = ["full"] }
 tokio-util = { version = "0.7", features = ["codec"] }
 url = "2.4"
 url-escape = "*"
-clap = { version = "4.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "0.8"
 
+clap = { version = "4.0", features = ["derive"], optional = true }
+
 [dev-dependencies]
 tempdir = "0.3"
+
+[features]
+build-binary = ["clap"]
