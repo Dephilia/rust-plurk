@@ -55,7 +55,7 @@ pub struct OauthKeys {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+async fn main() -> Result<(), PlurkError> {
     let cli = Cli::parse();
 
     let plurk = match (cli.consumer_key, cli.consumer_secret, cli.key_file.clone()) {
@@ -78,10 +78,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let url = plurk.get_auth_url()?;
         println!("Please access to: {}", url);
         print!("Input pin:");
-        io::stdout().flush()?;
+        io::stdout().flush().expect("Flush failed");
 
         let mut user_input = String::new();
-        io::stdin().read_line(&mut user_input)?;
+        io::stdin()
+            .read_line(&mut user_input)
+            .expect("Failed to read the user input");
         let pin = user_input.trim();
         plurk.verify_auth(pin).await?;
         plurk
@@ -106,17 +108,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .collect()
     });
 
-    let file_parameters: Option<Vec<(String, String)>> = cli.file.map(|query| {
-        query
-            .iter()
-            .map(|pair_raw| {
-                let mut iter = pair_raw.splitn(2, ',').map(|s| s.trim().to_string());
-                (
-                    iter.next().unwrap_or_default(),
-                    iter.next().unwrap_or_default(),
-                )
-            })
-            .collect()
+    let file_parameters: Option<(String, String)> = cli.file.map(|pair_raw| {
+        let mut iter = pair_raw.splitn(2, ',').map(|s| s.trim().to_string());
+        (
+            iter.next().unwrap_or_default(),
+            iter.next().unwrap_or_default(),
+        )
     });
 
     let res = plurk.request(cli.api, parameters, file_parameters).await?;
@@ -137,9 +134,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
-    let parsed_res = res.json::<serde_json::Value>().await?;
+    let parsed_res: serde_json::Value = res.json().await.expect("To json failed.");
 
-    let pretty = serde_json::to_string_pretty(&parsed_res)?;
+    let pretty = serde_json::to_string_pretty(&parsed_res).expect("Format json failed.");
     println!("{}", pretty);
 
     Ok(())
