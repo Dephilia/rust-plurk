@@ -3,7 +3,6 @@ use crate::secret::{Secret, SecretError};
 use reqwest::{self, multipart, Body, RequestBuilder, Response};
 use serde::{Deserialize, Serialize};
 use std::{
-    ffi::OsStr,
     fmt::{self, Debug},
     path::Path,
 };
@@ -59,16 +58,23 @@ impl Plurk {
         self.secret.get_token_key().is_some()
     }
 
-    fn update_token<S: Into<String>>(&mut self, token_key: S, token_secret: S) {
+    fn update_token<S>(&mut self, token_key: S, token_secret: S)
+    where
+        S: Into<String>,
+    {
         self.secret.update_token_mut(token_key, token_secret);
     }
 
-    fn prep_cmd(api: impl Into<String>) -> String {
+    fn prep_cmd<I>(api: I) -> String
+    where
+        I: Into<String>,
+    {
         format!("{}{}", BASE_URL, api.into())
     }
 
     fn sign(&self, builder: RequestBuilder) -> RequestBuilder {
         let (client, inner) = builder.build_split();
+        // TODO: Remove the unwrap
         let request = inner.unwrap();
 
         let url = &request.url()[..Position::AfterPath];
@@ -95,19 +101,22 @@ impl Plurk {
 
     async fn file_to_multipart<TPath>(file: (String, TPath)) -> Result<multipart::Form, PlurkError>
     where
-        TPath: AsRef<Path> + std::convert::AsRef<OsStr>,
+        TPath: AsRef<Path>,
     {
-        let file_obj = File::open(&file.1)
+        let file_path = file.1;
+        let file_path: &Path = file_path.as_ref();
+        let file_path = file_path.to_owned();
+        let file_obj = File::open(&file_path)
             .await
             .map_err(|e| PlurkError::APICallError(e.to_string()))?;
-        let file_name = Path::new(&file.1)
+        let file_name = file_path
             .file_name()
             .ok_or(PlurkError::APICallError(String::from(
                 "Cannot get file name.",
-            )))?;
-
-        // Just convert type, ignore result
-        let file_name = file_name.to_os_string().into_string().unwrap();
+            )))?
+            .to_os_string()
+            .into_string()
+            .unwrap_or_default();
 
         let stream = FramedRead::new(file_obj, BytesCodec::new());
         let file_body = Body::wrap_stream(stream);
@@ -129,7 +138,7 @@ impl Plurk {
     where
         TQuery: Serialize,
         TString: Into<String>,
-        TPath: AsRef<Path> + AsRef<OsStr>,
+        TPath: AsRef<Path>,
     {
         // Accept order file > query
         let query = if file.is_some() { None } else { query };
@@ -254,5 +263,56 @@ impl fmt::Display for Plurk {
                 "Unauthorized"
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_fmt_error() {
+        let res = format!("{}", PlurkError::APICallError("foo".into()));
+        assert_eq!(res, "API Request Error: foo");
+        let res = format!("{}", PlurkError::AuthError("foo".into()));
+        assert_eq!(res, "Authorization Error: foo");
+        let res = format!(
+            "{}",
+            PlurkError::SecretError(SecretError::IOError("foo".into()))
+        );
+        assert_eq!(res, "Secret Error: IO Error: foo");
+    }
+
+    #[test]
+    fn test_new_plurk() {
+        let plurk = Plurk::new("123", "abc", None, None);
+        let res = format!("{}", plurk);
+        assert_eq!(res, "Plurk API 123 (Unauthorized)");
+
+        let plurk = Plurk::new("123", "abc", Some("ttt"), None);
+        let res = format!("{}", plurk);
+        assert_eq!(res, "Plurk API 123 (Unauthorized)");
+
+        let plurk = Plurk::new("123", "abc", None, Some("AAA"));
+        let res = format!("{}", plurk);
+        assert_eq!(res, "Plurk API 123 (Unauthorized)");
+
+        let plurk = Plurk::new("123", "abc", Some("ttt"), Some("AAA"));
+        let res = format!("{}", plurk);
+        assert_eq!(res, "Plurk API 123 (Authorized)");
+    }
+
+    #[tokio::test]
+    async fn test_auth_flow() {
+        let mut plurk = Plurk::new(
+            "z3kiB2tbqrlC",
+            "u8mCwet8BQNjROfUZU8A6BHc1o9rx1AE",
+            None,
+            None,
+        );
+        // TODO: Add test case
+        let _ = plurk.request_auth().await;
+        let _ = plurk.get_auth_url();
+        let _ = plurk.verify_auth("1234").await;
     }
 }

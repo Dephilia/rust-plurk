@@ -55,7 +55,7 @@ pub struct OauthKeys {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), PlurkError> {
+async fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
 
     let plurk = match (cli.consumer_key, cli.consumer_secret, cli.key_file.clone()) {
@@ -78,12 +78,10 @@ async fn main() -> Result<(), PlurkError> {
         let url = plurk.get_auth_url()?;
         println!("Please access to: {}", url);
         print!("Input pin:");
-        io::stdout().flush().expect("Flush failed");
+        io::stdout().flush()?;
 
         let mut user_input = String::new();
-        io::stdin()
-            .read_line(&mut user_input)
-            .expect("Failed to read the user input");
+        io::stdin().read_line(&mut user_input)?;
         let pin = user_input.trim();
         plurk.verify_auth(pin).await?;
         plurk
@@ -95,43 +93,31 @@ async fn main() -> Result<(), PlurkError> {
         plurk.to_toml(key_file)?;
     }
 
-    let parameters = if let Some(q) = cli.query {
-        let mut pair_list: Vec<(String, String)> = Vec::new();
-        for pair_raw in &q {
-            let mut iter = pair_raw.splitn(2, ',');
-            let key = iter
-                .next()
-                .expect("Get query key failed.")
-                .trim()
-                .to_string();
-            let val = iter
-                .next()
-                .expect("Get query value failed.")
-                .trim()
-                .to_string();
-            pair_list.push((key, val));
-        }
-        Some(pair_list)
-    } else {
-        None
-    };
+    let parameters: Option<Vec<(String, String)>> = cli.query.map(|query| {
+        query
+            .iter()
+            .map(|pair_raw| {
+                let mut iter = pair_raw.splitn(2, ',').map(|s| s.trim().to_string());
+                (
+                    iter.next().unwrap_or_default(),
+                    iter.next().unwrap_or_default(),
+                )
+            })
+            .collect()
+    });
 
-    let file_parameters = if let Some(f) = cli.file {
-        let mut iter = f.splitn(2, ',');
-        let key = iter
-            .next()
-            .expect("Get query key failed.")
-            .trim()
-            .to_string();
-        let val = iter
-            .next()
-            .expect("Get query value failed.")
-            .trim()
-            .to_string();
-        Some((key, val))
-    } else {
-        None
-    };
+    let file_parameters: Option<Vec<(String, String)>> = cli.file.map(|query| {
+        query
+            .iter()
+            .map(|pair_raw| {
+                let mut iter = pair_raw.splitn(2, ',').map(|s| s.trim().to_string());
+                (
+                    iter.next().unwrap_or_default(),
+                    iter.next().unwrap_or_default(),
+                )
+            })
+            .collect()
+    });
 
     let res = plurk.request(cli.api, parameters, file_parameters).await?;
 
@@ -151,12 +137,9 @@ async fn main() -> Result<(), PlurkError> {
         return Ok(());
     }
 
-    let parsed_res = res
-        .json::<serde_json::Value>()
-        .await
-        .expect("To json failed.");
+    let parsed_res = res.json::<serde_json::Value>().await?;
 
-    let pretty = serde_json::to_string_pretty(&parsed_res).expect("Format json failed.");
+    let pretty = serde_json::to_string_pretty(&parsed_res)?;
     println!("{}", pretty);
 
     Ok(())

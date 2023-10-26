@@ -88,11 +88,9 @@ impl Oauth1 {
         if let Some(verifier) = &self.oauth_verifier {
             res.push_str(&format!("oauth_verifier=\"{}\", ", verifier));
         }
-        res.push_str(&format!("oauth_version=\"{}\", ", self.oauth_version));
 
         // Remove last ", "
-        res.pop();
-        res.pop();
+        res.push_str(&format!("oauth_version=\"{}\"", self.oauth_version));
         res
     }
 
